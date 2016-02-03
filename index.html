@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style>
+  body {
+    font: 10px sans-serif;
+  }
+  
+  .axis path,
+  .axis line {
+    fill: none;
+    stroke: #000;
+    shape-rendering: crispEdges;
+  }
+  
+  .bar {
+    fill: steelblue;
+  }
+  
+  .x.axis path {
+    display: none;
+  }
+  
+  div.tooltip {
+    position: absolute;
+    padding: 5px;
+    text-align: center;
+    color: #000;
+    background: #AAA;
+    border-style: solid;
+    border-width: 2px;
+    border-color: #000;
+    border-radius: 8px;
+    text-anchor: middle;
+    font-family: sans-serif;
+    font-size: 6px;
+    font-style: italic;
+  }
+  
+  label {
+    position: absolute;
+    top: 60px;
+    left: 700px;
+    color: #D8D8D8;
+  }
+  
+  .grid {
+    stroke: lightgrey;
+    opacity: 0.7;
+    shape-rendering: crispEdges;
+  }
+</style>
+
+<body>
+  <label><input type="checkbox"> Sort values</label>
+
+  <script src="d3.v3.min.js"></script>
+  <script>
+    // Interactive, Sortable Stacked Bar Chart
+    // http://bl.ocks.org/katirg/f7d064cd9c3efbc3c360
+    // http://bl.ocks.org/mbostock/3886208
+    // http://bl.ocks.org/yuuniverse4444/8325617
+    // http://bl.ocks.org/mbostock/3885705
+
+    // http://www.d3noob.org/2013/01/adding-grid-lines-to-d3js-graph.html
+    function make_x_axis() {
+      return d3.svg.axis()
+        .scale(x)
+        .orient("bottom")
+        .ticks(5)
+    }
+
+    function make_y_axis() {
+      return d3.svg.axis()
+        .scale(y)
+        .orient("left")
+        .ticks(10)
+    }
+
+    var margin = {
+        top: 20,
+        right: 20,
+        bottom: 160,
+        left: 100
+      },
+      width = 960 - margin.left - margin.right,
+      height = 800 - margin.top - margin.bottom;
+
+    var x = d3.scale.ordinal()
+      .rangeRoundBands([0, width], .1);
+
+    var y = d3.scale.linear()
+      .rangeRound([height, 0]);
+    
+    Coal_color = "#3B3131";
+    Oil_color = "#886666";
+    Gas_color = "#AEC7E8";
+    GasFlaring_color = "#f99a1c";
+    Cement_color = "#666688";
+    var color = d3.scale.ordinal()
+      .range([Coal_color, Oil_color, Gas_color, GasFlaring_color, Cement_color]);
+
+    var xAxis = d3.svg.axis()
+      .scale(x)
+      .orient("bottom");
+
+    var yAxis = d3.svg.axis()
+      .scale(y)
+      .orient("left")
+      .tickFormat(d3.format(".2s"));
+
+    var svg = d3.select("body").append("svg")
+      .attr("width", width + margin.left + margin.right)
+      .attr("height", height + margin.top + margin.bottom)
+      .append("g")
+      .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+    var active_link = "0"; //to control legend selections and hover
+    var legendClicked; //to control legend selections
+    var legendClassArray = []; //store legend classes to select bars in plotSingle()
+    var legendClassArray_orig = []; //orig (with spaces)
+    var sortDescending = false; //if true, bars are sorted by height in descending order
+    var restoreXFlag = false; //restore order of bars back to original
+
+    var div = d3.select("body").append("div")
+      .attr("class", "tooltip")
+      .style("opacity", 0);
+
+    //disable sort checkbox
+    d3.select("label")
+      .select("input")
+      .property("disabled", true)
+      .property("checked", false);
+
+    d3.tsv("MtCO2_byCountry.tsv", function(error, data) {
+      //d3.tsv("MtCO2perGDP_byCountry.tsv", function(error, data) {    
+      //d3.tsv("MtCO2perPop_byCountry.tsv", function(error, data) {      
+
+      if (error) throw error;
+
+      color.domain(d3.keys(data[0]).filter(function(key) {
+        return key !== "Country";
+      }));
+
+      data.forEach(function(d) {
+        var y0 = 0;
+        d.sources = color.domain().map(function(name) {
+          return {
+            country: d.Country,
+            name: name,
+            y0: y0,
+            y1: y0 += +d[name],
+            value: d[name],
+            ycoord_corrected: 0
+          };
+        });
+        d.total = d.sources[d.sources.length - 1].y1;
+
+        d["Gasflaring"] = d["Gas flaring"]; // to handle the space
+
+      });
+
+      //Sort totals in descending order
+      data.sort(function(a, b) { return b.total - a.total; });
+
+      x.domain(data.map(function(d) { return d.Country; }));
+      y.domain([0, d3.max(data, function(d) { return d.total; })]);
+
+      svg.append("g")
+        .attr("class", "x axis")
+        .attr("transform", "translate(0," + height + ")")
+        .call(xAxis)
+        .selectAll("text") // http://www.d3noob.org/2013/01/how-to-rotate-text-labels-for-x-axis-of.html 
+        .style("text-anchor", "end")
+        .attr("dx", "-.8em")
+        .attr("dy", ".15em")
+        .attr("transform", "rotate(-65)");
+
+      svg.append("g")
+        .attr("class", "y axis")
+        .call(yAxis)
+        .append("text")
+        .attr("transform", "rotate(-90)")
+        .attr("y", 6)
+        .attr("dy", ".71em")
+        .style("text-anchor", "end");
+      //.text("Population");
+
+      svg.append("g")
+        .attr("class", "grid")
+        .call(make_y_axis()
+          .tickSize(-width, 0, 0)
+          .tickFormat("")
+        )
+
+      var state = svg.selectAll(".state")
+        .data(data)
+        .enter().append("g")
+        .attr("class", "g");
+
+      height_diff = 0;
+      state.selectAll("rect")
+        .data(function(d) {
+          return d.sources;
+        })
+        .enter().append("rect")
+        .attr("width", x.rangeBand())
+        .attr("y", function(d) {
+          h_orig = y(d.y0) - y(d.y1); //based on stacked values (inaccurate)
+          h_correct = y(0) - y(d.value); //based on data value in csv file
+          height_diff = height_diff + h_orig - h_correct;
+
+          //correct y-coord
+          ycoord_corrected = y(d.y1) + height_diff;
+          d.ycoord_corrected = ycoord_corrected //store in d for later use in restorePlot()
+
+          if (d.name === "Cement") height_diff = 0; //reset for next set of stacked bars
+
+          return ycoord_corrected;
+          // return y(d.y1);  //orig, but not accurate  
+
+        })
+        .attr("x", function(d) { //add to stock code
+          return x(d.country)
+        })
+        .attr("height", function(d) {
+          return y(0) - y(d.value); //heights calculated based on data value (accurate)
+        })
+        .attr("class", function(d) {
+          classLabel = d.name.replace(/\s/g, ''); //remove spaces
+          return "bars class" + classLabel;
+        })
+        .style("fill", function(d) {
+          return color(d.name);
+        });
+
+      state.selectAll("rect")
+        .on("mouseenter", function(d) {
+          if (d3.select(this).style("opacity") != 0) {
+            var xPos = parseFloat(d3.select(this).attr("x"));
+            var yPos = parseFloat(d3.select(this).attr("y"));
+            var height = parseFloat(d3.select(this).attr("height"))
+
+            d3.select(this).attr("stroke", "#000").attr("stroke-width", 1.0);
+
+            format = d3.format("5.1f");
+            div.transition().style("opacity", .9);
+            div.html(d.country + " / " + d.name + "<br><b>" + format(d.value) + "</b>")
+              .style("left", (d3.event.pageX + 20) + "px")
+              .style("top", (d3.event.pageY - 20) + "px");
+          }
+        })
+        .on("mouseout", function() {
+          d3.select(this).attr("stroke", "#000").attr("stroke-width", 0);
+          div.transition().style("opacity", 0);
+        });
+
+      var legend = svg.selectAll(".legend")
+        .data(color.domain().slice().reverse())
+        .enter().append("g")
+        .attr("class", function(d) {
+          legendClassArray.push(d.replace(/\s/g, '')); //remove spaces
+          legendClassArray_orig.push(d); //remove spaces
+          return "legend";
+        })
+        .attr("transform", function(d, i) {
+          return "translate(0," + i * 20 + ")";
+        });
+
+      //reverse order to match order in which bars are stacked    
+      legendClassArray = legendClassArray.reverse();
+      legendClassArray_orig = legendClassArray_orig.reverse();
+
+      legend.append("rect")
+        .attr("x", width - 18)
+        .attr("width", 18)
+        .attr("height", 18)
+        .style("fill", color)
+        .attr("id", function(d, i) {
+          return "id" + d.replace(/\s/g, '');
+        })
+        .on("mouseover", function() {
+
+          if (active_link === "0") d3.select(this).style("cursor", "pointer");
+          else {
+            if (active_link.split("class").pop() === this.id.split("id").pop()) {
+              d3.select(this).style("cursor", "pointer");
+            } else d3.select(this).style("cursor", "auto");
+          }
+        })
+        .on("click", function(d) {
+
+          if (active_link === "0") { //nothing selected, turn on this selection
+            d3.select(this)
+              .style("stroke", "black")
+              .style("stroke-width", 2);
+
+            active_link = this.id.split("id").pop();
+            plotSingle(this);
+
+            //gray out the others
+            for (i = 0; i < legendClassArray.length; i++) {
+              if (legendClassArray[i] != active_link) {
+                d3.select("#id" + legendClassArray[i])
+                  .style("opacity", 0.5);
+              } else sortBy = i; //save index for sorting in sorting()
+            }
+
+            //enable sort checkbox
+            d3.select("label")
+              .style("color", "black")
+              .select("input")
+              .property("disabled", false)
+              //sort the bars if checkbox is clicked            
+              .on("change", sorting);
+
+          } else { //deactivate
+
+            if (active_link === this.id.split("id").pop()) { //active square selected; turn it OFF
+              d3.select(this)
+                .style("stroke", "none");
+
+              //restore remaining boxes to normal opacity
+              for (i = 0; i < legendClassArray.length; i++) {
+                d3.select("#id" + legendClassArray[i])
+                  .style("opacity", 1);
+              }
+
+              if (d3.select("label").select("input").property("checked")) {
+                restoreXFlag = true;
+              }
+
+              //disable sort checkbox
+              d3.select("label")
+                .style("color", "#D8D8D8")
+                .select("input")
+                .property("disabled", true)
+                .property("checked", false);
+
+              //sort bars back to original positions if necessary
+              sorting();
+
+              //y translate selected category bars back to original y posn
+              restorePlot(d);
+
+              active_link = "0"; //reset
+            }
+
+          } //end active_link check
+
+        });
+
+      legend.append("text")
+        .attr("x", width - 24)
+        .attr("y", 9)
+        .attr("dy", ".35em")
+        .style("text-anchor", "end")
+        .text(function(d) {
+          return d;
+        });
+
+      // restore graph after a single selection
+      function restorePlot(d) {
+
+        //restore opacity of erased bars    
+        d3.selectAll(".bars:not(.class" + class_keep + ")")
+          .transition()
+          .duration(500)
+          .delay(function() {
+            if (restoreXFlag) return 2000;
+            else return 750;
+          })
+          .attr("width", x.rangeBand()) //restore bar width
+          .style("opacity", 1);
+
+        //translate bars back up to original y-posn
+        d3.selectAll(".class" + class_keep)
+          .attr("x", function(d) {
+            return x(d.country);
+          })
+          .transition()
+          .duration(500)
+          .delay(function() {
+            if (restoreXFlag) return 1000; //bars need time to be restored to orig posn
+            else return 0;
+          })
+          .attr("y", function(d) {
+            //return y(d.y1); //not exactly correct since not based on raw data value
+            return d.ycoord_corrected;
+          });
+
+        //reset
+        restoreXFlag = false;
+
+      }
+
+      // plot only a single legend selection
+      function plotSingle(d) {
+
+        class_keep = d.id.split("id").pop();
+        idx = legendClassArray.indexOf(class_keep);
+
+        d3.selectAll(".bars:not(.class" + class_keep + ")")
+          .transition()
+          .duration(500)
+          .attr("width", 0) // svg has no zindex mechanism so hide the bars (opacity set to 0) other bar unselectable if drawn after
+          .style("opacity", 0);
+
+        //lower the bars to start on x-axis  
+        state.selectAll("rect").forEach(function(d, i) {
+
+          //get height and y posn of base bar and selected bar
+          h_keep = d3.select(d[idx]).attr("height");
+          y_keep = d3.select(d[idx]).attr("y");
+
+          h_base = d3.select(d[0]).attr("height");
+          y_base = d3.select(d[0]).attr("y");
+
+          h_shift = h_keep - h_base;
+          y_new = y_base - h_shift;
+
+          //reposition selected bars
+          d3.select(d[idx])
+            .transition()
+            .ease("bounce")
+            .duration(500)
+            .delay(750)
+            .attr("y", y_new);
+        })
+
+      }
+
+      //adapted change() fn in http://bl.ocks.org/mbostock/3885705
+      function sorting() {
+
+        if (this.checked) {
+          sortDescending = true;          
+          y.domain([0, d3.max(data, function(d) {
+            return +d[class_keep];
+          })]);
+        } else {
+          sortDescending = false;          
+          y.domain([0, d3.max(data, function(d) {
+            return d.total;
+          })]);
+        }
+
+        // Rescale the Y Axis to match range of selected data
+        svg.select(".y.axis")
+          .call(yAxis);
+
+        colName = legendClassArray_orig[sortBy];
+
+        var x0 = x.domain(data.sort(sortDescending ? function(a, b) {
+              return b[colName] - a[colName];
+            } : function(a, b) {
+              return b.total - a.total;
+            })
+            .map(function(d, i) {
+              return d.Country;
+            }))
+          .copy();
+
+        state.selectAll(".class" + active_link)
+          .sort(function(a, b) {
+            return x0(a.country) - x0(b.country);
+          });
+
+        var transition = svg.transition().duration(500),
+          delay = function(d, i) {
+            return i * 5;
+          }; // If transition is not fast enough, bars cannot be restored properly        
+
+        //sort bars
+        transition.selectAll(".class" + active_link)
+          .delay(delay)
+          .attr("x", function(d) {
+            return x0(d.country);
+          })
+          .attr("y", function(d) {
+            return y(d.value);
+          })
+          .attr("height", function(d) {
+            return y(0) - y(d.value);
+          });
+
+        //sort x-labels accordingly    
+        transition.select(".x.axis")
+          .call(xAxis)
+          .selectAll("text")
+          .style("text-anchor", "end")
+          .attr("dx", "-.8em")
+          .attr("dy", ".15em")
+          .attr("transform", "rotate(-65)");
+
+      }
+
+    });
+  </script>
